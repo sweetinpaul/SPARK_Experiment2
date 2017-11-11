@@ -15,6 +15,7 @@ from pyspark.sql.functions import *
 import pyspark.sql.functions as f
 from pyspark.sql.window import Window
 from pyspark.ml.tuning import *
+import matplotlib.pyplot as plt
 
 
 #files to use for processing
@@ -51,9 +52,12 @@ broadcasted_user_idmapping=sc.broadcast(user_id_dictionary)
 
 # Udf function to read string_id and return the corresponding integer_id from the dictionary. 
 
-udf_for_userid= udf(lambda string_id: broadcasted_user_idmapping.value[string_id], IntegerType())
+udf_for_userid= udf(lambda string_id: 
+                    broadcasted_user_idmapping.value[string_id]
+                    , IntegerType())
 
-user_like_hash=user_like_hash.withColumn                    ('id',udf_for_userid(user_like_hash.user_id_string))
+user_like_hash=user_like_hash.withColumn('id',
+                                         udf_for_userid(user_like_hash.user_id_string))
 
 #mapping table for user_id to integer id
 user_id_mapping=user_like_hash.select('user_id_string','id')
@@ -65,10 +69,14 @@ user_id_mapping=user_like_hash.select('user_id_string','id')
 #separating each row of user_id and paper_id_array (u_id,[p_1,p_2,p-3])
 #into separate rows..
 #.. into (u_id,p_1),(u_id,p_2),(u_id,p_3)
-user_likes=user_like_hash.select(user_like_hash.id.alias('user_id')                                 ,explode(split('paper_hash',','))                                 .alias('paper_id'))
+user_likes=user_like_hash.select(user_like_hash.id.alias('user_id')
+                                 ,explode( split('paper_hash',','))
+                                        .alias('paper_id'))
 
 #casting paper_ids to integer
-user_likes= user_likes.select('user_id',user_likes.paper_id                                                    .cast(IntegerType())                                                    .alias('paper_id'))
+user_likes= user_likes.select('user_id',
+                              user_likes.paper_id.cast(IntegerType())
+                                        .alias('paper_id'))
 
 #Exercise 2.1: Sparsity ratio: No of empty ratings divided by total ratings
 #to calculate this ratio, we need to find:
@@ -80,45 +88,24 @@ total_ratings=user_like_hash.count()*paper_count
 print("total ratings NxM",total_ratings)
 print("Sparsity ratio of rating matrix is:",(total_ratings-user_likes.count())/total_ratings)
 
-
-# In[30]:
-
-
 #Ex 2.1
-import matplotlib.pyplot as plt
 
-user_like_frequency=user_likes.groupBy('user_id')                                .agg(f.count('paper_id')                                .alias('users_likecount'))
-                            #.sort('users_likecount')
-item_popularity=user_likes.groupBy('paper_id')                            .count()                            .withColumnRenamed('count','papers_likecount')
-
-#getting x and y cordinates as array extracted from each row object you get when you collect
-# x-y for item_popularity
-item_plot_x_cordi=[i.paper_id for i in item_popularity.select('paper_id').collect()]
-item_plot_y_cordi=[i.papers_likecount for i in item_popularity.select('papers_likecount').collect()]
-'''#print(item_plot_x_cordi)
-#print(item_plot_y_cordi)
-'''
-
-# x-y for user_popularity
-user_plot_x_cordi=[i.user_id for i in user_like_frequency.select('user_id').collect()]
-user_plot_y_cordi=[i.users_likecount for i in user_like_frequency.select('users_likecount').collect()]
-
+item_popularity=user_likes.groupBy('paper_id')
+                            .count()
+                            .withColumnRenamed('count','papers_likecount')
 
 print("plotting")
-#plt.plot(item_plot_x_cordi,item_plot_y_cordi)
-#plt.hist(user_plot_y_cordi, bins=20)
-plt.plot(item_plot_y_cordi)
+plt.hist(user_likes.select('user_id').rdd.map(lambda row: row.user_id).collect(), bins=28416)
 plt.show()
-
-
-# In[5]:
-
+plt.hist(user_likes.select('paper_id').rdd.map(lambda row: row.paper_id).collect(), bins=172079)
+plt.show()
 
 #ex 2.2
 # Each row in the user_likes table represent a paper which has been rated 1 by that user. This our table of 1 ratings 
 # To do this ,We will append a column to user_likes with default 1.
 
-rating_1_table=user_likes.select('user_id','paper_id')                        .withColumn('paper_ratings',lit(1))
+rating_1_table=user_likes.select('user_id','paper_id')
+                            .withColumn('paper_ratings',lit(1))
 
 # the ratings matrix conceptually contains rating of one user corresponding to all papers, 
 # to get such a matrix , first we have to do a cross join of user_ids with paper_ids
@@ -135,9 +122,14 @@ should be chosen randomly from the set of papers unrated by (u). '''
 #So we will not do cross join instead union x no. of rows for each user into rating_1_table. 
 #x is the no. of '1' ratings for each user.
 
-table_with_all_ratings=user_likes.select('user_id').distinct()                        .crossJoin(item_popularity.select('paper_id'))                        .withColumn('paper_ratings',lit(0))
+table_with_all_ratings=user_likes.select('user_id').distinct()
+                                .crossJoin(item_popularity.select('paper_id'))
+                                .withColumn('paper_ratings',lit(0))
 #rating_1_table.show() table_with_all_ratings.show() user_likes.show()
-rating_matrix=table_with_all_ratings.subtract(rating_1_table.select('user_id','paper_id')                  .withColumn('paper_ratings',lit(0)))                    .union(rating_1_table)#.show()
+rating_matrix=table_with_all_ratings.subtract(rating_1_table
+                                              .select('user_id','paper_id')
+                                                        .withColumn('paper_ratings',lit(0)))
+                                                .union(rating_1_table)#.show()
 rating_matrix.show(10)
 
 
@@ -153,7 +145,12 @@ import pyspark.ml.recommendation as ml
 import pyspark.ml.evaluation as E
 
 #We instantiate an als object bsed on default parametrs
-als = ml.ALS(rank=10, maxIter=5,              seed=0,userCol="user_id", itemCol="paper_id",             ratingCol="paper_ratings")
+als = ml.ALS(rank=10, 
+             maxIter=5,
+             seed=0,
+             userCol="user_id", 
+             itemCol="paper_id",
+             ratingCol="paper_ratings")
 
 
 # In[7]:
@@ -165,7 +162,7 @@ als = ml.ALS(rank=10, maxIter=5,              seed=0,userCol="user_id", itemCol=
 model = als.fit(rating_matrix)
 
 # Part b:select 10 recommendations for each user and filter the user_id we need
-top_10_results=model.recommendForAllUsers(10)                    .select('*').filter(condition)                    .first().recommendations
+top_10_results=model.recommendForAllUsers(10).select('*').filter(condition).first().recommendations
 
         
 #Part c: REcommendation for user:1eac022a97d683eace8815545ce3153f
@@ -173,7 +170,7 @@ top_10_results=model.recommendForAllUsers(10)                    .select('*').fi
     # FInd internal integer ID of the user searching in the mapping table of user_string-user_int_id.
     # Collect the result as an array of row objects.Get the 1st row from the row object
     # and return its integer_id to user_x variable
-user_x= user_id_mapping.select('*')                        .filter('user_id_string = "d45c0800b19e92ed7ee2db27ab2aae21"')                        .collect()[0].id
+user_x= user_id_mapping.select('*').filter('user_id_string = "d45c0800b19e92ed7ee2db27ab2aae21"').collect()[0].id
 
     # we now create an SQL where condition and then use this where condition clause inside the filter
 condition='user_id='+str(user_x)
@@ -216,7 +213,7 @@ prediction_object=trained_model.transform(test_data)
 #        Use rmse error calculator from the library Evaluation.RegressionCalculator 
 
 #        Instatntiate the Evaluator object
-evaluator = E.RegressionEvaluator(labelCol="paper_ratings"                                  ,predictionCol="prediction"                                  ,metricName="rmse")
+evaluator = E.RegressionEvaluator(labelCol="paper_ratings",predictionCol="prediction",metricName="rmse")
 #       Evaluate the RMSE of predicted dataset and print
 rmse=evaluator.evaluate(prediction_object)
 print("RMSE of the model on test data is:",rmse)
@@ -240,10 +237,13 @@ top10_for_test_users.filter(top10_for_test_users.recommendation_rank<10)        
 
 
 #instantiate als object with default maxIter.
-als_for_k=ml.ALS(maxIter=5,userCol="user_id", itemCol="paper_id",                             ratingCol="paper_ratings")
+als_for_k=ml.ALS(maxIter=5,userCol="user_id", itemCol="paper_id",ratingCol="paper_ratings")
 
 # part a:Create a parameter map for different values of "rank" parameter
-paramGrid_for_rank = ParamGridBuilder()                     .addGrid(als_for_k.rank, [10, 25, 50])                     .build()
+paramGrid_for_rank = ParamGridBuilder()
+                                        .addGrid(als_for_k.rank,
+                                                 [10, 25, 50])
+                                        .build()
 
 #        Create cross validator object with your estimator algorithms,paprameter set and the evaluator. 
 #         We use the previosly declared Regression evaluator
@@ -265,12 +265,15 @@ print("the RMSE error was",crossval_ranked_model.avgMetrics[2])
 
 # part b: Experiment with maxIter hyperparametrs
 #        instantiate als object with with a default rank.
-als_for_iter=ml.ALS(rank=5,userCol="user_id", itemCol="paper_id",                             ratingCol="paper_ratings")
+als_for_iter=ml.ALS(rank=5,userCol="user_id", itemCol="paper_id",ratingCol="paper_ratings")
 
 # Create a separate parameter map for maxIter
 maxiter_values=[5,10,11,12,15,25]
     
-paramGrid_for_iter = ParamGridBuilder()                     .addGrid(als_for_iter.maxIter, maxiter_values)                     .build()
+paramGrid_for_iter = ParamGridBuilder()
+                                    .addGrid(als_for_iter.maxIter, 
+                                             maxiter_values)
+                                .build()
 crossval_iter = CrossValidator(estimator=als_for_iter,
                           estimatorParamMaps=paramGrid_for_iter,
                           evaluator=evaluator,
